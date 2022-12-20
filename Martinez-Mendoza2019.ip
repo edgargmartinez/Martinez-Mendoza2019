@@ -1,0 +1,107 @@
+{
+  "metadata": {
+    "language_info": {
+      "codemirror_mode": {
+        "name": "python",
+        "version": 3
+      },
+      "file_extension": ".py",
+      "mimetype": "text/x-python",
+      "name": "python",
+      "nbconvert_exporter": "python",
+      "pygments_lexer": "ipython3",
+      "version": "3.8"
+    },
+    "kernelspec": {
+      "name": "python",
+      "display_name": "Python (Pyodide)",
+      "language": "python"
+    }
+  },
+  "nbformat_minor": 4,
+  "nbformat": 4,
+  "cells": [
+    {
+      "cell_type": "markdown",
+      "source": "# Getting started",
+      "metadata": {}
+    },
+    {
+      "cell_type": "markdown",
+      "source": "This small draft contains the main steps for recreating data from [Capillary pressure and relative permeability estimation for low salinity waterflooding processes using pore network models](https://doi.org/10.1016/j.petrol.2019.106253). Please note OpenPNM V1.8 has been used for this demo.",
+      "metadata": {}
+    },
+    {
+      "cell_type": "markdown",
+      "source": "## Case 1: LWSF in a sandstone sample",
+      "metadata": {}
+    },
+    {
+      "cell_type": "code",
+      "source": "import OpenPNM\nimport OpenPNM.Utilities.IO as io\nimport OpenPNM.Geometry.models as gm \nimport stats_analysis as stta\nimport numpy as np\nimport pandas as pd",
+      "metadata": {},
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "source": "### Network",
+      "metadata": {}
+    },
+    {
+      "cell_type": "code",
+      "source": "mgr = OpenPNM.Base.Workspace()\npn = OpenPNM.Network.GenericNetwork(name='pn')\nprefix = 'S1'\nio.Statoil.load(network=pn, path='', prefix=prefix)\npn.trim(pn.check_network_health()['trim_pores'])",
+      "metadata": {},
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "source": "### Build Geometry",
+      "metadata": {}
+    },
+    {
+      "cell_type": "code",
+      "source": "# Set up geometries only to internal pores\n\ngeometry = OpenPNM.Geometry.GenericGeometry(network=pn,pores=pn.Ps,throats=pn.Ts,name='geom')\n\nfor item in pn.props():\n    if item not in ['throat.conns', 'pore.coords']:\n        geometry.update({item: pn.pop(item)})\n\nfor item in pn.props():\n    if item not in ['throat.conns', 'pore.coords','pore.all','throat.all',\n                    'pore.outlets','pore.inlets','pore.coordination_number']:\n        del(pn[item])\n        \ngeometry['pore.diameter']= geometry['pore.radius']*2\ngeometry.add_model(propname='pore.volume',model=gm.pore_volume.sphere)\ngeometry.add_model(propname='pore.area',model=gm.pore_area.spherical)\n\ngeometry['throat.diameter']= geometry['throat.radius']*2\ngeometry.add_model(propname='throat.length',model=gm.throat_length.straight)\ngeometry.add_model(propname='throat.volume',model=gm.throat_volume.cylinder)\ngeometry.add_model(propname='throat.perimeter',model=gm.throat_perimeter.cylinder)\n\ngeometry.add_model(propname='throat.area',model=gm.throat_area.cylinder)\ngeometry.add_model(propname='throat.surface_area',model=gm.throat_surface_area.cylinder)\n\ngeometry.regenerate()",
+      "metadata": {},
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "source": "### Build phases",
+      "metadata": {}
+    },
+    {
+      "cell_type": "code",
+      "source": "'''oil'''\noil = OpenPNM.Phases.GenericPhase(network=pn,name='oil')\noil['pore.contact_angle'] = 180-111\noil['pore.temperature'] = 363.15  # K (90°C) \noil['pore.viscosity'] = 0.010824  #Pa.s\n\n'''water: formation water'''\nwater = OpenPNM.Phases.GenericPhase(network=pn,name='water')\nwater['pore.temperature'] = 363.15  # K (90°C) \nwater['pore.viscosity'] = 3e-4  #Pa.s\nwater['pore.surface_tension']= 0.02343  #N.m\nwater['pore.diffusivity'] = 2.151e-9  # m2/s Qiao(2016)\n\n'''sw: formation water/100'''\nsw = OpenPNM.Phases.GenericPhase(network=pn,name='sw')\nsw['pore.temperature'] = 363.15  # K (90°C) \nsw['pore.viscosity'] = 4.85e-4  #Pa.s\nsw['pore.surface_tension']= 0.01724  #N.m\nsw['pore.diffusivity'] = 2.151e-9  # m2/s Qiao(2016)",
+      "metadata": {},
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "source": "### Build physics",
+      "metadata": {}
+    },
+    {
+      "cell_type": "code",
+      "source": "phys_oil = OpenPNM.Physics.Standard(network=pn,phase=oil,pores=pn.Ps,\n                                    throats=pn.Ts,name='phys_oil')   \nphys_water = OpenPNM.Physics.Standard(network=pn,phase=water,pores=pn.Ps,\n                                    throats=pn.Ts,name='phys_water') \nphys_sw = OpenPNM.Physics.Standard(network=pn,phase=sw,pores=pn.Ps,\n                                   throats=pn.Ts,name='phys_sw')      \n               \n\nmod = OpenPNM.Physics.models.diffusive_conductance.bulk_diffusion\nphys_water.add_model(propname='throat.diffusive_conductance',model=mod,\n                  diffusivity='pore.diffusivity')\nphys_water.regenerate()\nphys_sw.add_model(propname='throat.diffusive_conductance',model=mod,\n                  diffusivity='pore.diffusivity')\nphys_sw.regenerate()\n",
+      "metadata": {},
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "source": "### Save network",
+      "metadata": {}
+    },
+    {
+      "cell_type": "code",
+      "source": "mgr.save_workspace('S1.pnm')",
+      "metadata": {},
+      "execution_count": null,
+      "outputs": []
+    }
+  ]
+}
